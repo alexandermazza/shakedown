@@ -17,168 +17,265 @@ Map the full interaction surface of an application, identify what's tested and w
 ## Process
 
 ```
-1. Scope       → What changed? What's the blast radius?
-2. Map         → Enumerate every user interaction path
-3. Catalog     → Check existing test coverage against the map
-4. Prioritize  → Rank uncovered paths by risk
-5. Test        → Write tests for the highest-risk gaps
-6. Report      → Summary of coverage, gaps, and findings
+0. Baseline     → Run existing tests, learn the test infra
+1. Scope        → What changed? What's the blast radius?
+2. Map+Catalog  → (parallel) Enumerate interactions AND audit existing tests
+3. Prioritize   → Rank uncovered paths by risk
+4. Test         → Write tests in rounds — pure logic first, stateful second
+5. Report       → Summary of coverage, gaps, and findings
 ```
+
+### Step 0: Baseline
+
+Before mapping anything, understand the existing test infrastructure. This prevents wasted effort writing tests that don't match the project's patterns.
+
+**Run existing tests first:**
+
+```bash
+# Discover the test command from package.json, Makefile, pyproject.toml, etc.
+npm test          # or pytest, go test, etc.
+```
+
+**Discover test infrastructure:**
+- Test framework (Jest, Vitest, pytest, Go testing, etc.)
+- Test file location and naming convention (`__tests__/`, `*.test.ts`, `*_test.go`, etc.)
+- Manual mocks directory (`__mocks__/`, `testutil/`, etc.)
+- Global setup needs (e.g., `(global as any).__DEV__ = true` for React Native)
+- State management testing patterns (Zustand: `store.getState().action()`, Redux: dispatch + selector)
+- Mock patterns for DB, external APIs, platform modules
+
+**Output:** A short infra summary — framework, test command, mock patterns, globals needed. This gets passed to every test-writing agent.
 
 ### Step 1: Scope
 
-Before mapping the whole app, narrow the focus. Ask yourself:
+Before mapping the whole app, narrow the focus:
 
 - **Is this a full-app audit or scoped to recent changes?**
   - If a feature branch: `git diff main...HEAD --name-only` to find changed files
-  - If full audit: skip this step, map everything
-- **What are the entry points?** (API routes, pages, background workers, webhooks)
+  - If full audit: skip scoping, map everything
+- **What are the entry points?** (API routes, pages, stores, background workers, webhooks)
 
 Output a short scope statement: "Auditing [X files / Y features / the full app], focusing on [area]."
 
-### Step 2: Map Interactions
+### Step 2: Map + Catalog (Parallel)
 
-Dispatch an **Explore agent** to enumerate every user-facing interaction. The agent should return a structured list, not prose.
+These two steps are independent — dispatch them as **parallel agents** to cut wall-clock time in half.
+
+#### Agent A: Map Interactions
+
+Dispatch an **Explore agent** to enumerate every user-facing interaction.
 
 **Agent prompt template:**
 
 ```
 Map every user interaction in this application. Work from: [directory]
 
-Focus areas: [list entry points — API routes, pages, workers, webhooks]
+Focus areas: [list entry points — API routes, pages, stores, workers, webhooks]
 
 For each interaction, return ONE LINE in this format:
 [CATEGORY] [ACTION] → [ENDPOINT/FUNCTION] | Edge: [edge cases]
 
 Examples:
 [ONBOARDING] Click "Connect Slack" → GET /api/connections/slack | Edge: OAuth failure, missing state
-[SLACK] Complete task → POST /api/slack/interactions (complete_task_{id}) | Edge: already resolved, unauthorized
-[WORKER] Process reminders → processReminders() | Edge: missing Slack connection, stale remindAt
+[QUIZ] Answer question → quizStore.submitAnswer() | Edge: timeout, already answered
+[WORKER] Process reminders → processReminders() | Edge: missing connection, stale data
 
-Group by category. Be exhaustive — check every route file, every button handler, every background job.
+Group by category. Be exhaustive — check every route file, every button handler,
+every store action, every background job.
 Do NOT write paragraphs. One line per interaction. Keep it tight.
 ```
 
-**Why one-line format:** The full interaction map from Step 2 is passed to Step 3's agent. Verbose descriptions waste tokens. One line per interaction keeps the map under 3K tokens for most apps.
+#### Agent B: Catalog Existing Coverage
 
-### Step 3: Catalog Existing Coverage
-
-Dispatch an **Explore agent** to cross-reference the interaction map against existing tests.
+Dispatch an **Explore agent** to audit existing test files independently.
 
 **Agent prompt template:**
 
 ```
-Here is every user interaction in this app:
+Analyze ALL test files in [test directory] and report:
 
-[paste interaction map from Step 2]
+For EACH test file:
+1. How many test cases (describe blocks and it/test blocks)
+2. What specific functions/behaviors are tested
+3. What mocking patterns are used
+4. What is NOT covered within each tested module
 
-Check existing test files at [test directories] and classify each interaction:
+Also identify which source modules have ZERO test files.
 
-COVERED   — has a direct test
-PARTIAL   — tested indirectly (e.g., helper is tested but not the route)
-UNCOVERED — no test coverage
+List test infrastructure details:
+- Framework and version
+- Mock directory contents
+- Global setup requirements
+- Common mock patterns (module mocks, manual mocks, etc.)
 
-Return the same one-line format with a coverage tag prepended:
-[COVERED] [SLACK] Complete task → POST /api/slack/interactions
-[UNCOVERED] [WORKER] Process reminders → processReminders()
-
-Also note: what test framework is used, what mocking patterns exist, and any
-infrastructure limitations (e.g., "route handlers use module-level DB imports,
-not injectable — unit tests need to mock at the module level").
+Output a structured summary:
+- Total test files and test cases
+- Modules with tests vs modules with zero tests
+- Key mock patterns to reuse
 ```
 
-### Step 4: Prioritize
+**Why parallel:** The catalog agent reads test files while the map agent reads source files. Neither depends on the other's output. You merge their results in Step 3.
 
-From the catalog, extract all UNCOVERED and PARTIAL items. Rank by:
+### Step 3: Prioritize
 
-1. **User-facing + new code** — highest risk (recently written, untested)
-2. **User-facing + existing code** — medium risk
-3. **Background/worker + new code** — medium risk
-4. **Background/worker + existing code** — lower risk
-5. **Edge cases on covered paths** — lowest (but still worth testing)
+Merge the interaction map with the coverage catalog. For each uncovered module, assign a risk level:
 
-Pick the top items based on available budget. For a typical feature branch, 20-40 new tests is a good target.
+| Priority | Criteria | Examples |
+|----------|----------|----------|
+| **Critical** | User-facing + complex logic + zero tests | Quiz generation, SRS algorithms, payment logic |
+| **High** | User-facing + new code, or revenue-critical | Free tier limits, streaming, rate limiting |
+| **Medium** | Stateful code with business logic | Store actions, data migrations, background tasks |
+| **Lower** | Utility functions, thin wrappers | Date formatting, analytics, platform API wrappers |
 
-### Step 5: Write Tests
+**Present the priority table to the user** before proceeding. This is a checkpoint — the user may want to adjust priorities or skip certain categories.
 
-Dispatch a **general-purpose agent** to write the tests. Give it:
-- The prioritized gap list
-- The test framework and patterns (from Step 3)
-- Specific instructions to follow existing conventions
+For a full-app audit, target **30-50 tests** in the first round, **30-50 more** in a second round.
+
+### Step 4: Write Tests (In Rounds)
+
+Tests should be written in **rounds**, not all at once. Each round targets a different complexity tier.
+
+#### Round 1: Pure Functions and Utilities
+
+Target exported functions with no side effects — the easiest to test and highest confidence per test.
+
+- Pure logic (validation, calculation, formatting)
+- Utility modules (date utils, parsers, converters)
+- Constants validation
+- Algorithm correctness (SRS intervals, scoring, ranking)
+
+#### Round 2: Stateful Code with Mocking
+
+Target modules that need database, API, or store mocking.
+
+- Database layers (verify correct SQL/queries via mocked DB)
+- Store actions (Zustand/Redux — test state transitions)
+- API clients (mock fetch/XHR, test parsing and error handling)
+- Background tasks (mock dependencies, test orchestration)
+
+#### Dispatching Test Writers
+
+**Dispatch 3-5 parallel agents**, each responsible for a batch of related test files. Group by dependency similarity so each agent can share mock setup.
 
 **Agent prompt template:**
 
 ```
-Write tests for these uncovered interaction paths. Work from: [directory]
+Write tests for these modules. Work from: [directory]
 
-## Gaps to Cover (priority order)
+## Test Infrastructure
+- Framework: [jest/vitest/pytest/etc]
+- Test location: [__tests__/lib/, __tests__/stores/, etc.]
+- Global setup: [e.g., (global as any).__DEV__ = true]
+- Mock patterns: [describe existing patterns from Step 0]
+- Manual mocks: [list __mocks__/ contents]
 
-[paste prioritized list]
+## Modules to Test
 
-## Test Conventions
-
-- Framework: [vitest/jest/pytest/etc]
-- Existing test patterns: [describe key patterns from Step 3]
-- Mock patterns: [how DB, external APIs are mocked]
-- Test locations: [where test files live]
+[For each module, include:]
+- File path and exported functions
+- Which functions are pure vs need mocking
+- Specific test cases to write
+- Mock setup needed
 
 ## Rules
-
 - Follow existing test file naming and structure conventions
-- Mock external dependencies (DB, APIs, auth) — don't hit real services
-- Test the behavior, not the implementation
+- Mock external dependencies — don't hit real services
+- Test behavior, not implementation
 - One test per distinct behavior or edge case
-- Run tests after writing to verify they pass: [test command]
-- Commit passing tests
-
-If a path is not unit-testable (e.g., requires integration test infra that
-doesn't exist), write a contract test that verifies the inputs/outputs of
-the underlying functions instead. Note what would need integration tests.
+- Run tests after writing: [test command]
 ```
 
-### Step 6: Report
+**After each round:**
+1. Run the full test suite to verify no regressions
+2. Fix any failures before starting the next round
+3. Count: new tests added, modules now covered
 
-Summarize findings to the user:
+### Step 5: Report
+
+Summarize findings after all rounds complete:
 
 ```
 ## Shakedown Report
 
 **Scope:** [what was audited]
 **Interactions mapped:** [count]
-**Coverage before:** [X covered / Y total]
-**Coverage after:** [X covered / Y total]
-**Tests added:** [count]
+
+### Coverage
+
+| Metric | Before | After |
+|--------|--------|-------|
+| Test files | X | Y |
+| Test cases | X | Y |
+| Modules with tests | X/Z | Y/Z |
+| Zero-test critical modules | X | Y |
+
+**Tests added:** [count] across [N] new test files
 **Bugs found:** [count — list if any]
 
+### New Test Files
+[Table: file | test count | what it covers]
+
 ### Remaining Gaps
-[List any UNCOVERED items that couldn't be tested and why]
+[List UNCOVERED items that couldn't be tested and why]
+- Components (N) — require component testing library setup
+- Edge functions (N) — require deployment/integration testing
+- E2E flows — not in scope for unit testing
 
 ### Recommendations
-[Any structural issues that limit testability, suggested fixes]
+[Structural issues that limit testability, suggested next steps]
 ```
 
-## Token Efficiency Tips
+## Parallel Agent Strategy
+
+Shakedown makes heavy use of parallel agents. Here's the dispatch pattern:
+
+```
+Step 2:  [Map Agent] ──────────────┐
+         [Catalog Agent] ──────────┤ (parallel)
+                                   ▼
+Step 3:  [You] merge + prioritize
+                                   │
+Step 4:  [Test Agent 1: pure fns] ─┐
+         [Test Agent 2: DB layer] ─┤
+         [Test Agent 3: stores]  ──┤ (parallel, per round)
+         [Test Agent 4: utils]   ──┘
+                                   │
+         Run tests, fix failures   │
+                                   │
+         [Test Agent 5: round 2] ──┐
+         [Test Agent 6: round 2] ──┤ (parallel)
+         [Test Agent 7: round 2] ──┘
+                                   │
+Step 5:  [You] report
+```
+
+Each agent gets a **complete, self-contained brief** — source file contents, mock setup, test cases to write, and project conventions. Never assume an agent has context from a previous step.
+
+## Token Efficiency
 
 - **Scope first.** A full-app audit of a large codebase can blow through tokens. For feature branches, scope to changed files and their callers.
-- **One-line format.** The interaction map is the token bottleneck — it gets passed between agents. Keep it structured and terse.
-- **Don't re-read in Step 5.** The test-writing agent should get the gap list and test conventions upfront. It reads source files as needed, but doesn't re-explore the full codebase.
-- **Batch by file.** Group related gaps so the agent can write multiple tests per file in one pass.
-- **Skip known failures.** If the project has pre-existing test failures, tell agents to ignore them so they don't waste tokens investigating.
+- **One-line format.** The interaction map is the token bottleneck. Keep it structured and terse.
+- **Parallel Steps 2+3.** The map and catalog agents don't depend on each other — run them simultaneously.
+- **Read source files yourself, brief agents precisely.** Read the high-priority source files between Steps 3 and 4. Pass specific function signatures and mock setup to test agents rather than making them re-explore.
+- **Batch by dependency.** Group test files by shared mock setup (e.g., all DB-dependent tests in one agent, all store tests in another).
+- **Skip known failures.** If the project has pre-existing test failures, tell agents to ignore them.
 
 ## Customization
 
 The skill works for any language or framework. Adapt the agent prompts:
 
-| Project Type | Entry Points to Check |
-|---|---|
-| Next.js / Express | `src/app/api/**/route.ts`, page components, middleware |
-| Django / Flask | `urls.py` / route decorators, views, management commands, celery tasks |
-| Rails | `routes.rb`, controllers, jobs, mailers |
-| CLI tool | Command handlers, subcommands, config parsing |
-| Library | Public API surface, edge cases per function |
+| Project Type | Entry Points to Check | State Management |
+|---|---|---|
+| Next.js / Express | `src/app/api/**/route.ts`, page components, middleware | React context, Zustand, Redux |
+| React Native / Expo | screens, stores, background tasks, push notifications | Zustand, MobX |
+| Django / Flask | `urls.py` / route decorators, views, management commands, Celery tasks | Django ORM |
+| Rails | `routes.rb`, controllers, jobs, mailers | ActiveRecord |
+| CLI tool | Command handlers, subcommands, config parsing | — |
+| Library | Public API surface, edge cases per function | — |
 
 ## What This Skill Is NOT
 
 - **Not a replacement for integration/E2E tests.** This finds gaps in unit and contract test coverage. It doesn't spin up browsers or real databases.
 - **Not a security audit.** It maps interactions but doesn't probe for vulnerabilities.
 - **Not exhaustive by definition.** The map is as good as the agent's exploration. Complex apps may need multiple passes or manual additions to the map.
+- **Not a one-shot process.** Expect 2-3 rounds for a full-app audit. The first round covers the easy wins; subsequent rounds tackle stateful code that needs heavier mocking.

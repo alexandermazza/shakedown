@@ -1,16 +1,17 @@
 # Shakedown
 
-A [Claude Code skill](https://docs.anthropic.com/en/docs/claude-code) that maps every user interaction in your app, identifies test gaps, and writes tests to close them.
+A [Claude Code skill](https://docs.anthropic.com/en/docs/claude-code/skills) that maps every user interaction in your app, identifies test gaps, and writes tests to close them.
 
 Named after the nautical term — a **shakedown** is a thorough test of a new ship to find problems before it sets sail.
 
 ## What It Does
 
-1. **Maps** every user interaction (API routes, UI actions, background jobs, webhooks)
-2. **Catalogs** existing test coverage against the interaction map
-3. **Prioritizes** uncovered paths by risk (user-facing + new code = highest)
-4. **Writes** targeted tests for the gaps
-5. **Reports** coverage before/after with any bugs found
+1. **Baselines** existing test infrastructure (framework, mocks, conventions)
+2. **Maps** every user interaction (API routes, UI actions, stores, background jobs)
+3. **Catalogs** existing test coverage in parallel with mapping
+4. **Prioritizes** uncovered paths by risk (user-facing + complex logic = highest)
+5. **Writes** targeted tests in rounds — pure logic first, stateful code second
+6. **Reports** coverage before/after with remaining gaps and recommendations
 
 ## Install
 
@@ -34,6 +35,8 @@ Or clone locally and reference the path:
 }
 ```
 
+> **Note:** Remote skill URLs require Claude Code to fetch the skill at runtime. If the skill isn't detected, clone the repo locally and use a file path instead.
+
 ## Usage
 
 In Claude Code:
@@ -52,51 +55,69 @@ Or describe what you want:
 
 ## How It Works
 
-Shakedown dispatches specialized agents in sequence:
+Shakedown dispatches specialized agents, parallelizing where possible:
 
 ```
-Scope → Map → Catalog → Prioritize → Test → Report
+Baseline → Scope → Map + Catalog (parallel) → Prioritize → Test (rounds) → Report
 ```
 
-Each agent gets only what it needs — the interaction map uses a one-line-per-interaction format to stay under 3K tokens, even for large apps.
+### Key Design Decisions
+
+- **Map and Catalog run in parallel** — the interaction mapper reads source files while the coverage cataloger reads test files. Neither depends on the other.
+- **Tests are written in rounds** — Round 1 covers pure functions (easy wins, high confidence). Round 2 tackles stateful code with mocking (stores, DB layers, API clients).
+- **Multiple test-writing agents run in parallel** — grouped by shared mock setup (e.g., all DB tests in one agent, all store tests in another). 3-5 agents per round.
+- **Each agent gets a complete brief** — source code, mock patterns, specific test cases, and project conventions. No agent relies on another agent's context.
 
 ### Example Output
 
 ```
 ## Shakedown Report
 
-Scope: feature/slack-only-task-management (29 files changed)
-Interactions mapped: 47
-Coverage before: 28/47 (60%)
-Coverage after: 43/47 (91%)
-Tests added: 41
+Scope: Full-app audit — RomaQuotidiana (Expo/React Native)
+Interactions mapped: 147
+
+### Coverage
+
+| Metric               | Before | After |
+|----------------------|--------|-------|
+| Test files           | 18     | 35    |
+| Test cases           | 224    | 474   |
+| Modules with tests   | 13/30  | 22/30 |
+| Zero-test critical   | 12     | 0     |
+
+Tests added: 250 across 17 new test files
 Bugs found: 0
 
 ### Remaining Gaps
-- Route handlers (4) — require integration test infra (module-level DB imports)
+- Components (90+) — require React Native Testing Library
+- Edge functions (3) — require deployment testing
 
 ### Recommendations
-- Consider dependency injection for route handlers to improve testability
+- Add integration tests for quiz flow (generate → store → answer → SRS update)
+- Consider dependency injection for route handlers
 ```
 
 ## Works With Any Stack
 
-| Stack | Entry Points |
-|---|---|
-| Next.js / Express | API routes, page components, middleware |
-| Django / Flask | URL routes, views, management commands, Celery tasks |
-| Rails | Controllers, jobs, mailers |
-| CLI tools | Command handlers, subcommands |
-| Libraries | Public API surface |
+| Stack | Entry Points | State Management |
+|---|---|---|
+| Next.js / Express | API routes, page components, middleware | React context, Zustand, Redux |
+| React Native / Expo | Screens, stores, background tasks, notifications | Zustand, MobX |
+| Django / Flask | URL routes, views, management commands, Celery tasks | Django ORM |
+| Rails | Controllers, jobs, mailers | ActiveRecord |
+| CLI tools | Command handlers, subcommands | — |
+| Libraries | Public API surface | — |
 
 ## Token Efficiency
 
 Shakedown is designed to minimize token usage:
 
 - **Scopes to changed files** on feature branches (skips unchanged code)
+- **Runs Map + Catalog in parallel** (2 agents, not sequential)
 - **One-line format** for the interaction map (not verbose descriptions)
-- **Passes only gaps** to the test-writing agent (not the full map)
-- **Batches by file** so related tests are written in one pass
+- **Reads source files once, briefs agents precisely** (passes function signatures and mock setup, not raw files)
+- **Batches test writing by shared mocking** so related tests reuse setup
+- **Passes only gaps** to test-writing agents (not the full map)
 
 ## License
 
