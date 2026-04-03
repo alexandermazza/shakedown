@@ -1,8 +1,12 @@
 # Shakedown
 
-A [Claude Code skill](https://docs.anthropic.com/en/docs/claude-code/skills) that maps every user interaction in your app, identifies test gaps, and writes tests to close them.
+**Automated test generation for any codebase using Claude Code.**
+
+A [Claude Code skill](https://docs.anthropic.com/en/docs/claude-code/skills) that maps every user interaction in your app, identifies test gaps, and writes tests to close them. Works with any stack — Next.js, React Native, Django, Rails, Go, and more.
 
 Named after the nautical term — a **shakedown** is a thorough test of a new ship to find problems before it sets sail.
+
+> **224 → 474 tests** in a single session on a real Expo/React Native app. 12 critical untested modules → 0.
 
 ## What It Does
 
@@ -150,6 +154,23 @@ Shakedown minimizes token usage through its architecture:
 | Read source once, brief agents precisely | Pass function signatures, not raw files |
 | Batch test-writing by shared mock setup | Agents reuse setup, don't re-discover |
 | Pass only gaps to test agents | Not the full 147-interaction map |
+
+## FAQ
+
+**How is this different from just asking Claude to write tests?**
+Shakedown is systematic. Instead of ad-hoc "write tests for this file," it maps your entire interaction surface, cross-references existing coverage, prioritizes by risk, and dispatches parallel agents to close gaps methodically. It writes 100-250+ tests in a session, not 5-10.
+
+**Does it work with my test framework?**
+Yes. Jest, Vitest, pytest, Go testing, RSpec, JUnit — the skill discovers your framework in the baseline step and generates tests that match your existing conventions and mock patterns.
+
+**How many tokens does it use?**
+A full-app shakedown on a medium app (30+ modules) typically runs through 2-3 rounds of parallel agents. The parallel architecture and scoping keep it efficient — most of the tokens go to actually writing tests, not re-reading code.
+
+**Can I run it on just part of my app?**
+Yes. On feature branches it automatically scopes to changed files. You can also tell it to focus on specific directories or modules.
+
+**What if I already have good test coverage?**
+Shakedown will report that. It catalogs what's covered, so if your app is well-tested, the report will confirm it and flag only the genuine gaps.
 
 ## Contributing
 
