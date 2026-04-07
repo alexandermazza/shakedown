@@ -1,0 +1,18 @@
+{
+  "name": "alexandermazza",
+  "owner": {
+    "name": "Alex Mazza"
+  },
+  "metadata": {
+    "description": "Plugins by Alex Mazza",
+    "homepage": "https://github.com/alexandermazza/shakedown"
+  },
+  "plugins": [
+    {
+      "name": "shakedown",
+      "version": "1.0.0",
+      "source": "./plugin",
+      "description": "Map every user interaction in an app, identify test gaps, and write tests for uncovered paths"
+    }
+  ]
+}

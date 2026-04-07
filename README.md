@@ -23,27 +23,20 @@ Baseline → Scope → Map + Catalog (parallel) → Prioritize → Test (rounds)
 
 ## Install
 
-Add to your project's `.claude/settings.json`:
+Add the marketplace and install the plugin:
 
-```json
-{
-  "skills": [
-    "https://github.com/alexandermazza/shakedown"
-  ]
-}
+```bash
+claude plugins marketplace add https://github.com/alexandermazza/shakedown
+claude plugins install shakedown@alexandermazza
 ```
 
-Or clone locally and reference the path instead:
+Or install from a local clone:
 
-```json
-{
-  "skills": [
-    "/path/to/shakedown"
-  ]
-}
+```bash
+git clone https://github.com/alexandermazza/shakedown.git
+claude plugins marketplace add /path/to/shakedown
+claude plugins install shakedown@alexandermazza
 ```
-
-> **Tip:** If the remote URL isn't detected as a skill, clone the repo and use the local path. Remote skill resolution depends on your Claude Code version.
 
 ## Usage
 
