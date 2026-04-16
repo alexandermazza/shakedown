@@ -1,7 +1,7 @@
 {
   "name": "shakedown",
   "version": "1.0.0",
-  "description": "Map every user interaction in an app, identify test gaps, and write tests for uncovered paths",
+  "description": "Map every user interaction in an app, then either audit test coverage and write missing tests, or tour the running app in a browser and report UX bugs, friction, and dead features",
   "author": {
     "name": "Alex Mazza"
   },
@@ -13,6 +13,9 @@
     "test-generation",
     "coverage",
     "shakedown",
-    "parallel-agents"
+    "parallel-agents",
+    "ux-audit",
+    "ui-testing",
+    "playwright"
   ]
 }

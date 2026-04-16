@@ -1,18 +1,48 @@
 ---
 name: shakedown
-description: Map every user interaction in an app, identify test gaps, and write tests for uncovered paths. Use after completing a feature, before merging, or when you want confidence that nothing is broken.
+description: Map every user interaction in an app, then either (a) audit test coverage and write missing tests (code mode), or (b) tour the running app in a browser and report UX bugs, friction, and dead features (ui mode). Use after a feature, before a redesign, or to get a fresh look at what the app actually does.
 ---
 
 # Shakedown
 
-Map the full interaction surface of an application, identify what's tested and what isn't, then write targeted tests to close the gaps.
+A shakedown is a thorough test of a new ship before it sets sail. This skill does that in two modes:
+
+- **`code`** — audit test coverage, identify gaps, and write missing tests.
+- **`ui`** — tour the running app in a browser, interact with every control, and report bugs, friction, dead features, and what's worth keeping.
+
+Both modes share the same philosophy: enumerate the surface, figure out what's missing, produce a structured report. One targets code coverage; the other targets user experience.
+
+## Picking a Mode
+
+**Default to `code`.** Switch to `ui` when:
+
+- The user says "UI shakedown", "UX shakedown", "shakedown the UI", or similar.
+- The user asks you to "look at the app", "see what it looks like", or "audit the experience".
+- The user wants to know what's confusing or unused from a user's perspective — not what's untested.
+
+When the request is ambiguous and both modes could apply, ask which one.
 
 ## When to Use
+
+### `code` mode
 
 - After completing a feature branch (before merge/PR)
 - When joining a project and want to understand coverage
 - After a large refactor to verify nothing broke
-- When the user asks to "test everything" or "find bugs"
+- When the user asks to "test everything" or "find test gaps"
+
+### `ui` mode
+
+- Before a redesign or planning sprint — know what to keep and what to cut
+- As a pre-flight pass before releasing a new feature
+- When you suspect part of the app is dead or broken but haven't looked
+- After a dependency or infra change that might have broken pages silently
+
+---
+
+# Mode: `code`
+
+Map the full interaction surface of an application, identify what's tested and what isn't, then write targeted tests to close the gaps.
 
 ## Process
 
@@ -225,9 +255,7 @@ Summarize findings after all rounds complete:
 [Structural issues that limit testability, suggested next steps]
 ```
 
-## Parallel Agent Strategy
-
-Shakedown makes heavy use of parallel agents. Here's the dispatch pattern:
+## Parallel Agent Strategy (code mode)
 
 ```
 Step 2:  [Map Agent] ──────────────┐
@@ -251,16 +279,7 @@ Step 5:  [You] report
 
 Each agent gets a **complete, self-contained brief** — source file contents, mock setup, test cases to write, and project conventions. Never assume an agent has context from a previous step.
 
-## Token Efficiency
-
-- **Scope first.** A full-app audit of a large codebase can blow through tokens. For feature branches, scope to changed files and their callers.
-- **One-line format.** The interaction map is the token bottleneck. Keep it structured and terse.
-- **Parallel Steps 2+3.** The map and catalog agents don't depend on each other — run them simultaneously.
-- **Read source files yourself, brief agents precisely.** Read the high-priority source files between Steps 3 and 4. Pass specific function signatures and mock setup to test agents rather than making them re-explore.
-- **Batch by dependency.** Group test files by shared mock setup (e.g., all DB-dependent tests in one agent, all store tests in another).
-- **Skip known failures.** If the project has pre-existing test failures, tell agents to ignore them.
-
-## Customization
+## Customization (code mode)
 
 The skill works for any language or framework. Adapt the agent prompts:
 
@@ -273,9 +292,159 @@ The skill works for any language or framework. Adapt the agent prompts:
 | CLI tool | Command handlers, subcommands, config parsing | — |
 | Library | Public API surface, edge cases per function | — |
 
-## What This Skill Is NOT
+---
 
-- **Not a replacement for integration/E2E tests.** This finds gaps in unit and contract test coverage. It doesn't spin up browsers or real databases.
+# Mode: `ui`
+
+Tour the running application in a browser, interact with every surface, and produce a prioritized report of what's broken, confusing, unused, or worth keeping.
+
+**The output is a report, not fixes.** Treat the audit as honest observation. The natural next step is a brainstorm about what to act on — typically leading to a spec and implementation plan. Don't try to fix things inline; that muddies the findings.
+
+## Requirements
+
+- A **running dev server**, or the ability to start one via `npm run dev` / `yarn dev` / `pnpm dev` / etc.
+- **Playwright MCP** available — the `mcp__*__browser_navigate`, `_snapshot`, `_click`, `_type`, `_take_screenshot`, `_console_messages` tools. If unavailable, tell the user and stop.
+- A clean-ish commit state. The tour creates screenshots; decide upfront whether they go in the repo or stay local.
+
+## Process
+
+```
+0. Baseline     → Find or start the dev server; verify Playwright MCP; create screenshot dir
+1. Scope        → Full-app tour, scoped to specific routes, or regression check on recent changes
+2. Inventory    → Read the router to enumerate routes + their interactive surfaces
+3. Tour         → Navigate each surface, interact with every control, capture screenshots + a11y snapshots, watch console/network for errors
+4. Evaluate     → Per surface: bugs, friction, dead features, what's worth keeping
+5. Prioritize   → Tier A (real bugs) / B (confusing or wasteful) / C (polish)
+6. Report       → Markdown with embedded screenshots and concrete recommendations
+```
+
+### Step 0: Baseline
+
+- Probe for a running dev server on common ports (5173 for Vite, 3000 for Next/CRA, 4173 for Vite preview, 8080 for webpack dev server). Example: `lsof -i :5173 -i :3000 -i :4173 -i :8080`.
+- If none is running, look in `package.json` or the project's equivalent for a `dev` script and start it in the background. Wait until it responds before tours begin.
+- Confirm Playwright MCP browser tools are available.
+- Create a screenshot directory — `.ux-review/` is a reasonable default. Add it to `.gitignore` if the user doesn't want the artifacts committed.
+- Resize the browser to a sensible desktop viewport (1440×900 is a good default; adjust if the app is clearly designed for a different size).
+
+**Output:** a short infra summary — URL, framework, routing library, viewport.
+
+### Step 1: Scope
+
+- **Full-app tour** (default): every route in the router.
+- **Scoped tour**: just the routes or flows the user called out.
+- **Regression check**: routes touched by `git diff --name-only main...HEAD` on frontend files.
+
+Output a short scope statement.
+
+### Step 2: Inventory
+
+Read the router file (typically `router.tsx`, `routes.tsx`, `app/routes.ts`, or equivalent) and any sidebar/nav component. For each route, note:
+
+- Path
+- Page component
+- Global filters that affect it (owner dropdowns, date pickers)
+- Whether it's in the sidebar (user-visible) or hidden (legacy / internal)
+
+If the sidebar advertises a route that no longer exists — or a route exists that isn't in the sidebar — flag it as a finding immediately.
+
+### Step 3: Tour
+
+For each surface in the inventory:
+
+1. `browser_navigate` to the route.
+2. `browser_wait_for` 1–3 seconds of settling time.
+3. `browser_take_screenshot` (full-page) to `.ux-review/NN-route.png`.
+4. `browser_snapshot` for the a11y tree — find interactive controls (buttons, links, inputs, dropdowns, tabs).
+5. For each interactive control:
+   - Interact (`_click`, `_type`, `_select`).
+   - Capture the follow-up screenshot.
+   - Note what happened (navigation, modal, dropdown options, data change).
+6. `browser_console_messages` at the end of the tour — capture errors.
+7. Scan network requests (`browser_network_requests` if available, or check `performance.getEntriesByType('resource')` via `browser_evaluate`) for 4xx/5xx, unusually slow requests, oversized payloads.
+
+### Common patterns to catch
+
+- **Long loading spinners without skeletons** — often means oversized unvirtualized renders. Confirm with a `document.querySelectorAll('tbody tr').length` check.
+- **Tables where whole columns are `—`** — dead data pipeline or broken endpoint.
+- **Links that route to pages with lost query params / state** — click through and see if the target uses the passed data.
+- **Section headers that render with no content** under filtered states — confirm by toggling filters.
+- **Console errors**, especially 500s or 404s on endpoints the page relies on.
+- **Clipped content** that overflows the viewport — check by measuring `scrollWidth` vs `clientWidth`.
+- **Inner-container scroll** that traps content inside an overflow div instead of using page scroll.
+- **Slow responses with no progress signal** — chat that streams but gives no "thinking" indicator.
+
+### Step 4: Evaluate
+
+For each surface, produce notes in four buckets:
+
+- **Bugs** — broken behavior: errors, dead links, wrong data, 5xx, click-through that loses state.
+- **Friction** — confusing or wasteful: redundant columns, long loads without progress, silent resets, tiny click targets, empty section headers.
+- **Dead features** — sections that clearly add no user value (all-dashes tables, unused routes, duplicate interactions).
+- **Worth keeping** — patterns that work well and should be preserved.
+
+Trust the user's hypotheses. If they said "I think X is unused," check X specifically and confirm or refute with evidence.
+
+### Step 5: Prioritize
+
+| Tier | Criteria | Examples |
+|------|----------|----------|
+| **A** | Real bugs — would ship broken today | 500 on a visible endpoint, link that drops its param, broken filter state |
+| **B** | Confusing or wasteful | Redundant columns, 25-second load with no skeleton, empty section headers on filtered data |
+| **C** | Minor polish | Missing favicon, dropdown overlaps content briefly, date off-by-one in an edge case |
+
+### Step 6: Report
+
+Write the report as a markdown file (default: `.ux-review/UX-REVIEW.md`). Structure:
+
+1. **Bottom line** — 2–3 sentence verdict. What's the real product? What's dead weight?
+2. **What's good (keep, polish)** — surface by surface, specifics + screenshot references.
+3. **What's broken or confusing** — tiered A/B/C list, each finding paired with a screenshot file name.
+4. **Recommendation on what to cut** — if applicable, name the specific routes/pages to remove, with reasoning.
+5. **Possible directions** — 2–4 sketches of what could replace cut functionality, explicitly framed as options.
+6. **Suggested next steps** — short prioritized list. For anything non-trivial, point to a brainstorm / spec session.
+
+Screenshots live alongside the report; reference them with relative paths.
+
+## Parallel Tours (ui mode)
+
+For large apps, split the tour across agents. Each route is independent of the others, so a tour agent can own a cluster:
+
+```
+[Tour Agent 1: /, /dashboard] ────┐
+[Tour Agent 2: /accounts, /pipeline] ┤ (parallel)
+[Tour Agent 3: /scan] ────────────┘   (owns deep flows with long interactions)
+                                   │
+                                   ▼
+[You] merge notes → report
+```
+
+Each agent gets a **complete, self-contained brief**:
+- Dev server URL
+- Routes it owns
+- Output directory for screenshots
+- Any user hypotheses to specifically check ("confirm or refute that /accounts is unused")
+
+Agents return a slice of findings; the controller merges them and writes the unified report.
+
+## What UI Shakedown Is NOT
+
+- **Not an auto-fix.** The skill produces a report. Acting on findings is a separate step — typically a brainstorm → spec → plan, not inline editing during the tour.
+- **Not a replacement for automated E2E tests.** It finds what's broken right now; it doesn't build reproducible test harnesses. For that, `code` mode is the right tool.
 - **Not a security audit.** It maps interactions but doesn't probe for vulnerabilities.
-- **Not exhaustive by definition.** The map is as good as the agent's exploration. Complex apps may need multiple passes or manual additions to the map.
-- **Not a one-shot process.** Expect 2-3 rounds for a full-app audit. The first round covers the easy wins; subsequent rounds tackle stateful code that needs heavier mocking.
+- **Not a pixel-perfect design review.** It flags functional UX friction. Pure aesthetics are out of scope unless they affect usability.
+
+---
+
+# Token Efficiency (both modes)
+
+- **Scope first.** A full-app shakedown is expensive. For feature branches, scope to changed files.
+- **Parallel Steps 2+3 in code mode, parallel tours in ui mode.** These are the biggest wall-clock wins.
+- **One-line interaction format (code mode).** Keep the map under 3K tokens.
+- **Read source files yourself and brief agents precisely (code mode).** Pass function signatures and mock setup rather than raw files.
+- **Capture screenshots to disk, not into the transcript (ui mode).** Reference them by filename in the report; don't re-inline them into the chat context.
+- **Skip known failures / known dead features.** Tell agents up front so they don't re-flag them.
+
+# What Shakedown Is NOT (either mode)
+
+- **Not a one-shot process.** Expect 2–3 rounds for a `code` shakedown, and for `ui` shakedown expect a follow-up brainstorm → spec cycle after the report.
+- **Not exhaustive by definition.** The map (code) or tour (ui) is as good as the agent's exploration. Complex apps may need multiple passes or manual additions.
